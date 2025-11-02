@@ -156,3 +156,32 @@ else
     # Run the upload script
     python deployment/upload_to_hf.py --username "$HF_USERNAME"
 fi
+
+# -----------------------------------------------------------------------------
+# Deploy to Google Cloud Run (optional)
+# Before running this section, you need to:
+#   1. Install gcloud CLI and authenticate: gcloud auth login
+#   2. Install Docker Desktop
+#   3. Set GCP_PROJECT_ID environment variable
+
+# Check if GCP_PROJECT_ID is set
+if [ -z "$GCP_PROJECT_ID" ]; then
+    echo "GCP_PROJECT_ID not set. Set it to deploy to Cloud Run (e.g., export GCP_PROJECT_ID=your-project-id)"
+    echo "Skipping Cloud Run deployment..."
+else
+    echo "Deploying to Google Cloud Run in project: $GCP_PROJECT_ID"
+
+    # Check if Docker is running
+    if ! docker info > /dev/null 2>&1; then
+        echo "Docker is not running. Please start Docker Desktop and try again."
+        echo "Skipping Cloud Run deployment..."
+    else
+        # Run the deployment script
+        python deployment/deploy_to_cloud_run.py --project-id "$GCP_PROJECT_ID"
+
+        echo "======================================================================"
+        echo "Deployment complete! Your NanoChat web app should be accessible via Cloud Run."
+        echo "Check the output above for your service URL."
+        echo "======================================================================"
+    fi
+fi
