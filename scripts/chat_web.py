@@ -157,33 +157,125 @@ def load_model_from_huggingface(repo_id: str, device: torch.device):
             print(f"Warning: Failed to download tokenizer from HuggingFace: {e}")
             print("Attempting to continue with local tokenizer if available...")
 
-        # Download model file
+        # Try to find model in chatsft_checkpoints directory structure
+        # This matches the structure uploaded by upload_to_hf.py
         import tempfile
+        import re
+        
+        all_files = list_repo_files(repo_id, repo_type="model")
+        
+        # Check if chatsft_checkpoints structure exists
+        chatsft_files = [f for f in all_files if f.startswith("chatsft_checkpoints/")]
+        
+        if chatsft_files:
+            print("Found chatsft_checkpoints structure on HuggingFace")
+            
+            # Find all model tags (directories in chatsft_checkpoints/)
+            model_tags = set()
+            for file_path in chatsft_files:
+                # Extract model tag from path like "chatsft_checkpoints/d20/model_000650.pt"
+                parts = file_path.split("/")
+                if len(parts) >= 3:
+                    model_tags.add(parts[1])  # parts[1] is the model tag (e.g., "d20")
+            
+            if not model_tags:
+                raise RuntimeError("No model tags found in chatsft_checkpoints directory")
+            
+            # Find the largest model tag (same logic as find_largest_model in checkpoint_manager.py)
+            candidates = []
+            for model_tag in model_tags:
+                match = re.match(r"d(\d+)", model_tag)
+                if match:
+                    model_depth = int(match.group(1))
+                    candidates.append((model_depth, model_tag))
+            
+            if candidates:
+                candidates.sort(key=lambda x: x[0], reverse=True)
+                selected_model_tag = candidates[0][1]
+            else:
+                # Fallback: use the first model tag
+                selected_model_tag = sorted(model_tags)[0]
+            
+            print(f"Selected model tag: {selected_model_tag}")
+            
+            # Find all steps for this model tag
+            step_pattern = re.compile(rf"chatsft_checkpoints/{re.escape(selected_model_tag)}/model_(\d+)\.pt")
+            steps = []
+            for file_path in chatsft_files:
+                match = step_pattern.match(file_path)
+                if match:
+                    steps.append(int(match.group(1)))
+            
+            if not steps:
+                raise RuntimeError(f"No checkpoints found for model tag {selected_model_tag}")
+            
+            # Find the latest step
+            latest_step = max(steps)
+            print(f"Found latest step: {latest_step:06d}")
+            
+            # Download model file and metadata
+            model_filename = f"chatsft_checkpoints/{selected_model_tag}/model_{latest_step:06d}.pt"
+            meta_filename = f"chatsft_checkpoints/{selected_model_tag}/meta_{latest_step:06d}.json"
+            
+            with tempfile.TemporaryDirectory() as temp_dir:
+                print(f"Downloading model: {model_filename}")
+                model_path = hf_hub_download(
+                    repo_id=repo_id, 
+                    filename=model_filename, 
+                    cache_dir=temp_dir
+                )
+                
+                print(f"Downloading metadata: {meta_filename}")
+                try:
+                    meta_path = hf_hub_download(
+                        repo_id=repo_id, 
+                        filename=meta_filename, 
+                        cache_dir=temp_dir
+                    )
+                    with open(meta_path, "r") as f:
+                        meta_data = json.load(f)
+                except Exception as e:
+                    raise RuntimeError(f"Failed to download metadata file {meta_filename}: {e}")
+                
+                # Load model checkpoint
+                model_data = torch.load(model_path, map_location=device)
+                
+                # Fix torch compile issue
+                model_data = {k.lstrip("_orig_mod."): v for k, v in model_data.items()}
+                
+                # Build model using the same logic as build_model in checkpoint_manager.py
+                model_config_kwargs = meta_data["model_config"]
+                print(f"Building model with config: {model_config_kwargs}")
+                model_config = GPTConfig(**model_config_kwargs)
+                
+                with torch.device("meta"):
+                    model = GPT(model_config)
+                
+                model.to_empty(device=device)
+                model.init_weights()
+                model.load_state_dict(model_data, strict=True, assign=True)
+                model.eval()
+                
+                # Get tokenizer (now should be available locally after download)
+                tokenizer = get_tokenizer()
+                
+                # Verify compatibility
+                assert tokenizer.get_vocab_size() == model_config_kwargs["vocab_size"]
+                
+                print(f"Successfully loaded model from HuggingFace: {repo_id}")
+                return model, tokenizer, meta_data
+        
+        # Fallback: try to load from root-level model.pt or model.pth (for backward compatibility)
+        print("chatsft_checkpoints not found, trying root-level model files...")
         with tempfile.TemporaryDirectory() as temp_dir:
-            # Download model.pt or model.pth
             try:
                 model_path = hf_hub_download(repo_id=repo_id, filename="model.pt", cache_dir=temp_dir)
             except:
                 try:
                     model_path = hf_hub_download(repo_id=repo_id, filename="model.pth", cache_dir=temp_dir)
                 except:
-                    # Try to find model in chatsft_checkpoints directory structure
-                    print("Model.pt not found at root, trying chatsft_checkpoints structure...")
-                    try:
-                        # List files to find the model
-                        all_files = list_repo_files(repo_id, repo_type="model")
-                        model_files = [f for f in all_files if "chatsft_checkpoints" in f and ("model.pt" in f or "model_" in f)]
-                        if model_files:
-                            # Get the largest model if multiple exist
-                            model_files.sort(reverse=True)
-                            model_file = model_files[0]
-                            print(f"Found model at: {model_file}")
-                            model_path = hf_hub_download(repo_id=repo_id, filename=model_file, cache_dir=temp_dir)
-                        else:
-                            raise FileNotFoundError("No model file found in HuggingFace repository")
-                    except Exception as e:
-                        raise RuntimeError(f"Could not find model file in HuggingFace repository: {e}")
-
+                    raise FileNotFoundError("No model file found in HuggingFace repository")
+            
             # Download metadata if available
             try:
                 meta_path = hf_hub_download(repo_id=repo_id, filename="meta.json", cache_dir=temp_dir)
@@ -204,38 +296,38 @@ def load_model_from_huggingface(repo_id: str, device: torch.device):
                         "weight_sharing": True
                     }
                 }
-
+            
             # Load model checkpoint
             checkpoint = torch.load(model_path, map_location=device)
-
+            
             # Handle different checkpoint formats
             if isinstance(checkpoint, dict) and 'model' in checkpoint:
                 model_data = checkpoint['model']
             else:
                 model_data = checkpoint
-
+            
             # Fix torch compile issue
             model_data = {k.lstrip("_orig_mod."): v for k, v in model_data.items()}
-
+            
             # Build model
             model_config_kwargs = meta_data.get("model_config", meta_data)
             print(f"Building model with config: {model_config_kwargs}")
             model_config = GPTConfig(**model_config_kwargs)
-
+            
             with torch.device("meta"):
                 model = GPT(model_config)
-
+            
             model.to_empty(device=device)
             model.init_weights()
             model.load_state_dict(model_data, strict=True, assign=True)
             model.eval()
-
+            
             # Get tokenizer (now should be available locally after download)
             tokenizer = get_tokenizer()
-
+            
             # Verify compatibility
             assert tokenizer.get_vocab_size() == model_config_kwargs["vocab_size"]
-
+            
             print(f"Successfully loaded model from HuggingFace: {repo_id}")
             return model, tokenizer, meta_data
 
