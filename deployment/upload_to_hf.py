@@ -39,24 +39,35 @@ def upload_model_to_hf(username, repo_name="nanochat-speedrun", base_dir=None):
 
     # Prepare model directory
     model_dir = os.path.join(base_dir, "export_hf")
+    # Remove existing export directory to ensure clean copy
+    if os.path.exists(model_dir):
+        shutil.rmtree(model_dir)
     os.makedirs(model_dir, exist_ok=True)
 
-    # Copy the final model checkpoint (sft is the last trained model)
-    sft_model = os.path.join(base_dir, "sft", "model.pth")
-    if not os.path.exists(sft_model):
-        print(f"Error: No SFT model found at {sft_model}")
-        return False
-
-    print(f"Copying model from {sft_model}")
-    shutil.copy(sft_model, os.path.join(model_dir, "model.pth"))
-
-    # Copy tokenizer files
-    tokenizer_model = os.path.join(base_dir, "tokenizer", "tok65536.model")
-    if os.path.exists(tokenizer_model):
-        print(f"Copying tokenizer from {tokenizer_model}")
-        shutil.copy(tokenizer_model, os.path.join(model_dir, "tokenizer.model"))
+    # Copy the entire chatsft_checkpoints directory
+    chatsft_source = os.path.join(base_dir, "chatsft_checkpoints")
+    if os.path.exists(chatsft_source):
+        chatsft_dest = os.path.join(model_dir, "chatsft_checkpoints")
+        print(f"Copying chatsft_checkpoints from {chatsft_source}")
+        shutil.copytree(chatsft_source, chatsft_dest)
+        print(f"✓ Copied chatsft_checkpoints directory")
     else:
-        print(f"Warning: Tokenizer not found at {tokenizer_model}")
+        print(f"Warning: chatsft_checkpoints not found at {chatsft_source}")
+
+    # Copy the entire tokenizer directory
+    tokenizer_source = os.path.join(base_dir, "tokenizer")
+    if os.path.exists(tokenizer_source):
+        tokenizer_dest = os.path.join(model_dir, "tokenizer")
+        print(f"Copying tokenizer from {tokenizer_source}")
+        shutil.copytree(tokenizer_source, tokenizer_dest)
+        print(f"✓ Copied tokenizer directory")
+    else:
+        print(f"Warning: tokenizer not found at {tokenizer_source}")
+
+    # Check if at least one directory was copied
+    if not os.path.exists(chatsft_source) and not os.path.exists(tokenizer_source):
+        print(f"Error: Neither chatsft_checkpoints nor tokenizer found in {base_dir}")
+        return False
 
     # Create a model card
     model_card_path = os.path.join(model_dir, "README.md")
