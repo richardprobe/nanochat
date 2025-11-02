@@ -61,4 +61,4 @@ ENV PORT=8080
 EXPOSE 8080
 
 # Run the web application
-CMD ["python", "-m", "scripts.chat_web", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["python", "-m", "scripts.chat_web", "--port", "8080", "--hf-repo", "richardprobe/nanochat"]
