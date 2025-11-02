@@ -135,3 +135,24 @@ torchrun --standalone --nproc_per_node=8 -m scripts.chat_eval -- -i sft
 # Generate the full report by putting together all the sections
 # report.md is the output and will be copied to current directory for convenience
 python -m nanochat.report generate
+
+# -----------------------------------------------------------------------------
+# Upload the model to HuggingFace Hub (optional)
+# Before running this script, you need to authenticate with HuggingFace:
+#   huggingface-cli login
+# or
+#   export HF_TOKEN=your_token_here
+
+# Check if HF_USERNAME is set
+if [ -z "$HF_USERNAME" ]; then
+    echo "HF_USERNAME not set. Set it to push to HuggingFace (e.g., export HF_USERNAME=your-username)"
+    echo "Skipping HuggingFace upload..."
+else
+    echo "Uploading model to HuggingFace Hub as $HF_USERNAME/nanochat-speedrun..."
+
+    # Install huggingface-hub if not already installed
+    uv pip install -q huggingface-hub
+
+    # Run the upload script
+    python deployment/upload_to_hf.py --username "$HF_USERNAME"
+fi
